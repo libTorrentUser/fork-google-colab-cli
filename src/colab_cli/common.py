@@ -78,6 +78,65 @@ class State:
             del self._sessions[name]
         self.history.log_event(name, "session_terminated", {"reason": "pruned"})
 
+    def prune_or_recover_session(self, name: str) -> bool:
+        """Handles a 404/401 from the runtime proxy without trusting it blindly.
+
+        The runtime proxy token is short-lived and expires well before an
+        assignment is torn down, so an expired token produces the exact same
+        404/401 as a genuinely terminated runtime. `list_assignments()` keeps
+        listing a live assignment -- and keeps minting it a fresh token --
+        long after the stored token has stopped working, so confirm against
+        the server before deleting the local binding instead of trusting the
+        proxy's error code alone:
+
+          * the endpoint is still listed -> adopt the fresh token/url and
+            keep the session. This call still fails, but the next one
+            succeeds with the refreshed credential.
+          * the endpoint is confirmed gone -> prune, as before.
+          * the server can't be reached at all -> keep the session; deleting
+            on an inconclusive check is the strictly worse failure mode.
+
+        Returns True if the session was pruned, False if it was preserved.
+        """
+        s = self.store.get(name)
+        if s is None:
+            return True
+
+        try:
+            assignments = self.client.list_assignments()
+        except Exception:
+            return False
+
+        for a in assignments:
+            if a.endpoint != s.endpoint:
+                continue
+            info = a.runtime_proxy_info
+            if info.token != s.token or info.url != s.url:
+                s.token, s.url = info.token, info.url
+                self.store.add(s)
+                if self._sessions is not None:
+                    self._sessions[name] = s
+                self.history.log_event(name, "proxy_token_refreshed", {})
+            return False
+
+        self.prune_session(name)
+        return True
+
+    def exception_handler_prune_or_recover_session(self, name: str) -> bool:
+        if state.prune_or_recover_session(name):
+            typer.echo(
+                f"[colab] Session '{name}' appears to be lost (404/401). Cleaning up."
+            )
+        else:
+            typer.echo(
+                f"[colab] Session '{name}' runtime proxy rejected the request "
+                "(404/401), but the assignment is still listed by the server "
+                "-- refreshed its credential and preserved the local session. "
+                "Retry the command."
+            )
+        raise typer.Exit(1);
+
+
     def sync_sessions(self):
         if self._sessions is not None:
             return self._sessions, self.client.list_assignments()

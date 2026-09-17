@@ -222,11 +222,7 @@ def exec_command(
         )
     except Exception as e:
         if is_terminal_error(e):
-            typer.echo(
-                f"[colab] Session '{name}' appears to be lost (404/401). Cleaning up."
-            )
-            state.prune_session(name)
-            raise typer.Exit(1)
+            state.exception_handler_prune_or_recover_session(name);
         raise e
 
     try:
@@ -326,11 +322,7 @@ def repl(
         )
     except Exception as e:
         if is_terminal_error(e):
-            typer.echo(
-                f"[colab] Session '{name}' appears to be lost (404/401). Cleaning up."
-            )
-            state.prune_session(name)
-            raise typer.Exit(1)
+            state.exception_handler_prune_or_recover_session(name);
         raise e
 
     if not is_stdin_tty():
@@ -395,11 +387,7 @@ def console(
         connect_console(s)
     except Exception as e:
         if is_terminal_error(e):
-            typer.echo(
-                f"[colab] Session '{name}' appears to be lost (404/401). Cleaning up."
-            )
-            state.prune_session(name)
-            raise typer.Exit(1)
+            state.exception_handler_prune_or_recover_session(name);
         raise e
     finally:
         s.running = None
